@@ -26,7 +26,7 @@ def preprocess_image(img_path):
     #read input image
     input_img = cv2.imread(img_path)
     #do transformations
-    input_img = resize(input_img, cnn_input_size, mode = 'reflect', anti_aliasing = True, preserve_range = True).astype(np.float32)
+    input_img = resize(input_img, cnn_input_size, mode = 'reflect', anti_aliasing = True).astype(np.float32)
     input_img -= mean
     input_img /= std
     # Convert HWC -> CHW
