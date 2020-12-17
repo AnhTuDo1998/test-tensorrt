@@ -148,18 +148,42 @@ if __name__ == "__main__":
     
     #Create a stream in which to copy inputs and outputs and run inference
     stream = cuda.Stream()
+        #starter = cuda.Event(cuda.event_flags.BLOCKING_SYNC)
+        #ender = cuda.Event(cuda.event_flags.BLOCKING_SYNC)
+        starter, ender = cuda.Event(), cuda.Event()
+        repetitions = 100
+        timings = np.zeros((repetitions, 1))
 
     #Preprocess data
     host_input = np.array(preprocess_image("turkish_coffee.jpg").numpy(), dtype=np.float32, order = 'C')
     cuda.memcpy_htod_async(device_input, host_input, stream)
 
-    # run inference
-    context.execute_async(bindings=[int(device_input), int(device_output)], steam_handle=steam.handle)
-    cuda.memcpy_htod_async(host_output, device_output, stream)
+        # Warming up
+        for _ in range (10):
+            context.execute_async(bindings=[int(device_input), int(device_output)], stream_handle=stream.handle)
+        
+        stream.synchronize()
+
+        #Real stuffs for inference measurement
+        for rep in range(repetitions):
+            starter.record(stream)
+            context.execute_async(bindings=[int(device_input), int(device_output)], stream_handle=stream.handle)
+            ender.record(stream)
+            ender.synchronize()
+            #print("Time:",starter.time_till(ender))
+            timings[rep] = starter.time_till(ender)
+
+        cuda.memcpy_dtoh_async(host_output, device_output, stream)
     stream.synchronize()
 
+        mean_infer_time = np.sum(timings) / repetitions
+        std_infer_time = np.std(timings)
+        print("Infer time: ", mean_infer_time, "+-", std_infer_time)
+
+        output_data = torch.Tensor(host_output)
+
     #Postprocess results
-    output_data = torch.Tensor(host_output).reshape(engine.max_batch_size, output_shape[0])
+        output_data = output_data.reshape(output_shape[0],output_shape[1])
     postprocess_output(output_data)
 
 
