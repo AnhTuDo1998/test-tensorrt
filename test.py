@@ -8,7 +8,7 @@ import cv2
 import onnx
 import pycuda.driver as cuda
 import pycuda.autoinit
-import tensorrt as trt 
+import tensorrt as trt
 
 #FLAG
 BASE_WORKFLOW = False
@@ -87,29 +87,32 @@ def main():
     model = models.resnet50(pretrained=True).cuda()
     model.eval()
 
-    # #Set up loggers for time measurement
-    # repetitions = 10
-    # timings = np.zeros((repetitions, 1))
-    # starter, ender = torch.cuda.Event(enable_timing = True), torch.cuda.Event(enable_timing = True)
+    #Set up loggers for time measurement
+    repetitions = 10
+    timings = np.zeros((repetitions, 1))
+    starter, ender = torch.cuda.Event(enable_timing = True), torch.cuda.Event(enable_timing = True)
 
     # #Warming up GPU
-    # for _ in range(10):
-    #     _ = model(img)
-    output = model(input)
-    # #Measuring average time
-    # with torch.no_grad():
-    #     for rep in range(repetitions):
-    #         starter.record()
-    #         output = model(img)
-    #         ender.record()
-    #         #Syncrhonize GPU
-    #         torch.cuda.synchronize()
-    #         curr_time = starter.elapsed_time(ender)
-    #         timings[rep] = curr_time
+    for _ in range(10):
+        _ = model(img)
 
-    # mean_infer_time = np.sum(timings) / repetitions
-    # std_infer_time = np.std(timings)
-    # print("Infer time: ", mean_infer_time, "+-", std_infer_time)
+    #output = model(input)
+    #print(output.shape)
+
+    #Measuring average time
+    with torch.no_grad():
+        for rep in range(repetitions):
+            starter.record()
+            output = model(img)
+            ender.record()
+            #Syncrhonize GPU
+            torch.cuda.synchronize()
+            curr_time = starter.elapsed_time(ender)
+            timings[rep] = curr_time
+
+    mean_infer_time = np.sum(timings) / repetitions
+    std_infer_time = np.std(timings)
+    print("Infer time: ", mean_infer_time, "+-", std_infer_time)
 
     #Post process
     postprocess_output(output)
@@ -125,38 +128,38 @@ if __name__ == "__main__":
         #Check if ONNX model is export correctly
         onnx_temp = onnx.load(ONNX_FILE_PATH)
         print(type(onnx_temp))
-
+        
         # Check that the IR is well formed
         onnx.checker.check_model(onnx_temp)
         print("Checked")
 
         engine, context = build_engine(ONNX_FILE_PATH)
 
-    #Get size of input output and allocate memory
-    for binding in engine:
-        if engine.binding_is_input(binding):
-            #Only one input in that list
-            input_shape = engine.get_binding_shape(binding)
-            input_size = trt.volume(input_shape) * engine.max_batch_size * np.dtype(np.float32).itemsize
-            device_input = cuda.mem_alloc(input_size)
-        else:
-            #Only one output
-            output_shape = engine.get_binding_shape(binding)
-            #Create page locked memory buffer 
-            host_output = cuda.pagelocked_empty(trt.volume(output_shape) * engine.max_batch_size, dtype=np.float32)
-            device_output = cuda.mem_alloc(host_output.nbytes)
-    
-    #Create a stream in which to copy inputs and outputs and run inference
-    stream = cuda.Stream()
+        #Get size of input output and allocate memory
+        for binding in engine:
+            if engine.binding_is_input(binding):
+                #Only one input in that list
+                input_shape = engine.get_binding_shape(binding)
+                input_size = trt.volume(input_shape) * engine.max_batch_size * np.dtype(np.float32).itemsize
+                device_input = cuda.mem_alloc(input_size)
+            else:
+                #Only one output
+                output_shape = engine.get_binding_shape(binding)
+                #Create page locked memory buffer 
+                host_output = cuda.pagelocked_empty(trt.volume(output_shape) * engine.max_batch_size, dtype=np.float32)
+                device_output = cuda.mem_alloc(host_output.nbytes)
+        
+        #Create a stream in which to copy inputs and outputs and run inference
+        stream = cuda.Stream()
         #starter = cuda.Event(cuda.event_flags.BLOCKING_SYNC)
         #ender = cuda.Event(cuda.event_flags.BLOCKING_SYNC)
         starter, ender = cuda.Event(), cuda.Event()
         repetitions = 100
         timings = np.zeros((repetitions, 1))
 
-    #Preprocess data
-    host_input = np.array(preprocess_image("turkish_coffee.jpg").numpy(), dtype=np.float32, order = 'C')
-    cuda.memcpy_htod_async(device_input, host_input, stream)
+        #Preprocess data
+        host_input = np.array(preprocess_image("turkish_coffee.jpg").numpy(), dtype=np.float32, order = 'C')
+        cuda.memcpy_htod_async(device_input, host_input, stream)
 
         # Warming up
         for _ in range (10):
@@ -174,19 +177,15 @@ if __name__ == "__main__":
             timings[rep] = starter.time_till(ender)
 
         cuda.memcpy_dtoh_async(host_output, device_output, stream)
-    stream.synchronize()
-
+        stream.synchronize()
+        
         mean_infer_time = np.sum(timings) / repetitions
         std_infer_time = np.std(timings)
         print("Infer time: ", mean_infer_time, "+-", std_infer_time)
 
         output_data = torch.Tensor(host_output)
 
-    #Postprocess results
+        #Postprocess results
         output_data = output_data.reshape(output_shape[0],output_shape[1])
-    postprocess_output(output_data)
-
-
-if __name__ == "__main__":
-    main()
+        postprocess_output(output_data)
         
