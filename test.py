@@ -11,8 +11,11 @@ import pycuda.autoinit
 import tensorrt as trt 
 
 #FLAG
-FULL_WORKFLOW = True
-ONNX_FILE_PATH = "fcku.onnx"
+BASE_WORKFLOW = False
+TENSORRT_WORKFLOW = True
+ONNX_FILE_PATH = "resnet50.onnx"
+#TRT Logger
+TRT_LOGGER = trt.Logger()
 
 #Define prepocessing steps
 def preprocess_image(img_path):
@@ -52,21 +55,20 @@ def postprocess_output(output_data):
         i += 1
 
 #Define function to build engine
-def build_engine(onnx_file_path, trt_logger):
+def build_engine(onnx_file_path):
     #Init tensorRT engine and parse ONNX model
-    builder = trt.Builder(trt_logger)
-    network = builder.create_network()
-    parser = trt.OnnxParser(network, trt_logger)
+    builder = trt.Builder(TRT_LOGGER)
+    explicit_batch_flag = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+    network = builder.create_network(explicit_batch_flag)
+    parser = trt.OnnxParser(network, TRT_LOGGER)
 
     #Parse ONNX model
-    with open(onnx_file_path, 'rb') as model:
-        print("Beginning ONNX file parsing")
-        print(model)
-        parser.parse(model.read())
-    print("Compiled parsing of ONNX file")
+    result = parser.parse_from_file(ONNX_FILE_PATH)
+    print("Completed parsing of ONNX file, status ==",result)
 
     #Some config:
-    builder.max_batch_size = 1    
+
+     
     #Generate the TensorRT engine optimized for Jetson Xavier
     print("Building an engine...")
     engine = builder.build_cuda_engine(network)
@@ -110,15 +112,25 @@ def main():
     # print("Infer time: ", mean_infer_time, "+-", std_infer_time)
 
     #Post process
-    #postprocess_output(output)
+    postprocess_output(output)
 
     #Convert to ONNX
     torch.onnx.export(model, input, ONNX_FILE_PATH, export_params=True)
 
-    #TRT Logger
-    TRT_LOGGER = trt.Logger(trt.Logger.VERBOSE)
+if __name__ == "__main__":
+    if BASE_WORKFLOW:
+        main()
 
-    engine, context = build_engine(ONNX_FILE_PATH,TRT_LOGGER)
+    if TENSORRT_WORKFLOW:
+        #Check if ONNX model is export correctly
+        onnx_temp = onnx.load(ONNX_FILE_PATH)
+        print(type(onnx_temp))
+
+        # Check that the IR is well formed
+        onnx.checker.check_model(onnx_temp)
+        print("Checked")
+
+        engine, context = build_engine(ONNX_FILE_PATH)
 
     #Get size of input output and allocate memory
     for binding in engine:
