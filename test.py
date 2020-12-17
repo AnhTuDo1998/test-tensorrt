@@ -11,11 +11,13 @@ import pycuda.autoinit
 import tensorrt as trt
 
 #FLAG
-BASE_WORKFLOW = False
+BASE_WORKFLOW = True
 TENSORRT_WORKFLOW = True
 ONNX_FILE_PATH = "resnet50.onnx"
 #TRT Logger
 TRT_LOGGER = trt.Logger()
+OPTIMIZED_FP16 = True
+OPTIMIZED_INT8 = False
 
 #Define prepocessing steps
 def preprocess_image(img_path):
@@ -67,7 +69,17 @@ def build_engine(onnx_file_path):
     print("Completed parsing of ONNX file, status ==",result)
 
     #Some config:
+    if OPTIMIZED_FP16 and builder.platform_has_fast_fp16:
+        builder.fp16_mode = True
+        builder.strict_type_constraints = True
+        print("Going with FP16 inference")
 
+    elif OPTIMIZED_INT8 and builder.platform_has_fast_int8:
+        builder.int8_mode = True
+        print("Going with INT8...")
+    
+    else:
+        print("Going with FP32 inference")
      
     #Generate the TensorRT engine optimized for Jetson Xavier
     print("Building an engine...")
@@ -94,7 +106,7 @@ def main():
 
     # #Warming up GPU
     for _ in range(10):
-        _ = model(img)
+        _ = model(input)
 
     #output = model(input)
     #print(output.shape)
@@ -103,7 +115,7 @@ def main():
     with torch.no_grad():
         for rep in range(repetitions):
             starter.record()
-            output = model(img)
+            output = model(input)
             ender.record()
             #Syncrhonize GPU
             torch.cuda.synchronize()
